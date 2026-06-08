@@ -54,3 +54,15 @@ To make code importable by other packages:
 - Use a different package name (e.g., `package httpserver`)
 - Export functions with capital letters
 - Import via the module path
+
+## Escape Characters
+
+| Escape | Name | What it does |
+|---|---|---|
+| `\r` | Carriage return | Moves cursor to index 0 (start of line) |
+| `\n` | Newline / line feed | Moves cursor down one line |
+| `\t` | Tab | Horizontal tab |
+
+`\r` prevents weird spacing by resetting to the beginning of the line before moving down.
+
+HTTP uses `\r\n` (CRLF) as line endings — a holdover from old teletype machines that needed both: return to start (`\r`) then move down (`\n`).
