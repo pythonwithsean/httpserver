@@ -1,9 +1,14 @@
 .SILENT:
+
+
+dev:
+	air
+
 run:
 	go run .
 
 test:
-	go test -v ./tests/ .
+	go test -v ./tests
 
 build:
 	go build -o http-server .
