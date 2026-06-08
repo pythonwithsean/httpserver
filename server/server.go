@@ -18,6 +18,7 @@ type Request struct {
 	Method  string
 	Path    string
 	Version string
+	Host    string
 	Headers map[string]string
 	Body    string
 }
@@ -68,14 +69,16 @@ func handleConn(conn net.Conn) {
 		log.Printf("Error reading from connection: %s", err)
 		return
 	}
-	header_parts := strings.Split(string(buff[:n]), "\r\n\r\n")
-	for i, part := range header_parts {
-		if i == 0 {
-			headerLines := strings.Split(part, "\r\n")
-			headerObj := ParseHeader(headerLines)
-			fmt.Printf("Parsed Header Object: %+v\n", headerObj)
-		} else {
-			fmt.Printf("Body Part: %s\n", part)
-		}
+	
+	req := &Request{Headers: make(map[string]string)}
+	parts := strings.SplitN(string(buff[:n]), "\r\n\r\n", 2)
+	
+	headerLines := strings.Split(parts[0], "\r\n")
+	ParseHeader(req, headerLines)
+	
+	if len(parts) > 1 {
+		ParseBody(req, parts[1])
 	}
+	
+	fmt.Printf("Parsed Request: %+v\n", req)
 }

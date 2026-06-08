@@ -14,12 +14,8 @@ func TestParseHeader(t *testing.T) {
 		"Accept: */*",
 	}
 
-	req := httpServer.ParseHeader(header)
-
-	if req == nil {
-		t.Errorf("Expected non-nil Request object, got nil")
-		return
-	}
+	req := &httpServer.Request{Headers: make(map[string]string)}
+	httpServer.ParseHeader(req, header)
 
 	if req.Method != "GET" {
 		t.Errorf("Expected Method 'GET', got '%s'", req.Method)
@@ -31,6 +27,10 @@ func TestParseHeader(t *testing.T) {
 
 	if req.Version != "HTTP/1.1" {
 		t.Errorf("Expected Version 'HTTP/1.1', got '%s'", req.Version)
+	}
+
+	if req.Host != "localhost:5100" {
+		t.Errorf("Expected Host 'localhost:5100', got '%s'", req.Host)
 	}
 
 }
