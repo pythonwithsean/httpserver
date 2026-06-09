@@ -1,193 +1,288 @@
-# OS Concepts - Socket File Descriptors
+# Go Notes
 
-## How sockets map to my HTTP server code
+## make() vs nil
 
-### Listening Socket FD (`net.Listen`)
+`make()` **never** returns nil. It initializes slices, maps, and channels:
 
-`net.Listen("tcp", port)` calls the OS syscalls: `socket()` + `bind()` + `listen()`.
+```go
+s := make([]int, 0)    // non-nil empty slice
+m := make(map[string]int) // non-nil empty map
+c := make(chan int)       // non-nil channel
+```
 
-The OS gives the process a **listening socket file descriptor**. This FD is not for reading/writing data — it only exists to accept incoming connections.
+You get `nil` with the **zero value** (no `make`):
 
-### Connection Socket FD (`listener.Accept()`)
+```go
+var s []int              // nil slice
+var m map[string]int     // nil map
+var c chan int           // nil channel
+```
 
-`listener.Accept()` calls the OS `accept()` syscall. It blocks until a client connects, then the OS creates a **brand new file descriptor** for that specific connection. This is the FD used to `read()`/`write()` with the remote machine.
-
-### Two types of FDs in the process
-
-| FD | Purpose |
-|---|---|
-| Listener FD | Waits for new connections (the "door") |
-| Connection FD | Reads/writes data with a specific client (the "conversation") |
-
-Each call to `Accept()` produces a new connection FD, which is why the `for` loop can handle many clients — each `conn` is a separate FD pointing to a different remote endpoint. The listener FD stays open the whole time, continuing to accept new connections.
-
-`go handleConn(conn)` hands off that connection FD to a goroutine so the loop can go back to `Accept()` the next one.
-
-## Client Address Format: `[::1]:53741`
-
-When `conn.RemoteAddr()` returns `[::1]:53741`:
-
-**`[::1]`** — IPv6 loopback address (same as `127.0.0.1` in IPv4). Means the connection came from localhost.
-
-**`53741`** — Ephemeral port the OS assigned to the client's side of the connection (not the server's port 5000). Every TCP connection has two endpoints: `client_ip:client_port ↔ server_ip:server_port`. The OS picks a random high port for the client.
-
-## Port Ranges
-
-Total: 0–65535 = **65,536 ports** per IP address.
-
-| Range | Name |
-|---|---|
-| 0–1023 | Well-known (HTTP=80, SSH=22, etc.) |
-| 1024–49151 | Registered |
-| 49152–65535 | Ephemeral (OS assigns these to clients) |
-
-## Go Packages: `package main` is not importable
-
-`package main` is the executable/program — it has a `main()` function and gets compiled into a binary. Go **forbids** importing `package main` from other packages. It's not a library.
-
-To test code in `package main`:
-- Put test files in the same directory with `package main`
-- Call functions directly, no import needed
-- Run with `go test .`
-
-To make code importable by other packages:
-- Use a different package name (e.g., `package httpserver`)
-- Export functions with capital letters
-- Import via the module path
-
-## Escape Characters
-
-| Escape | Name | What it does |
+| | `nil` | `make()` |
 |---|---|---|
-| `\r` | Carriage return | Moves cursor to index 0 (start of line) |
-| `\n` | Newline / line feed | Moves cursor down one line |
-| `\t` | Tab | Horizontal tab |
+| Read from map | returns zero value | returns zero value |
+| Write to map | **panics** | works |
+| Slice `append` | works | works |
+| Slice len/cap | 0/0 | 0/0 (but non-nil) |
+| `== nil` | true | false |
 
-`\r` prevents weird spacing by resetting to the beginning of the line before moving down.
+---
 
-HTTP uses `\r\n` (CRLF) as line endings — a holdover from old teletype machines that needed both: return to start (`\r`) then move down (`\n`).
+## Interfaces
 
-## Go Modules & `go get`
+```go
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}
 
-### Module Path (`go.mod`)
+type FileWriter struct{}
 
-The module path like `github.com/pythonwithsean/httpserver` is just a unique identifier to avoid naming collisions. It doesn't make anything public — repo visibility on GitHub controls that.
+func (f FileWriter) Write(p []byte) (int, error) {
+    return len(p), nil
+}
 
-### How `go get` works
-
-```bash
-go get github.com/someone/package
+// FileWriter implicitly satisfies Writer
+var w Writer = FileWriter{}
 ```
 
-1. Fetches the repo from GitHub
-2. Reads its `go.mod` to get dependencies
-3. Downloads it to your **module cache** (`~/go/pkg/mod/`)
-4. Adds it to your `go.mod` under `require`
+---
 
-### Go Binary vs Module Cache
+## Method Overriding (Embedding)
 
-**Go binary location:**
-```
-/opt/homebrew/bin/go    ← the Go compiler/toolchain itself
-```
+Go uses **embedding** instead of inheritance:
 
-**Module cache (where `go get` installs packages):**
-```
-~/go/pkg/mod/           ← downloaded dependencies live here
-```
+```go
+type Base struct{}
+func (b Base) Greet() string { return "hello" }
 
-**GOPATH (legacy workspace):**
-```
-~/go/                   ← default GOPATH
-├── bin/                ← compiled binaries from `go install`
-├── pkg/mod/            ← module cache (dependencies)
-└── src/                ← legacy workspace (rarely used now)
+type Child struct {
+    Base
+}
+func (c Child) Greet() string { return "hi" } // overrides
+
+c := Child{}
+c.Greet()       // "hi"
+c.Base.Greet()  // "hello"
 ```
 
-When you `go get` a package, it goes into `~/go/pkg/mod/`, not into the Go binary. The Go compiler (`/opt/homebrew/bin/go`) reads from the cache when building your project.
+---
 
-### Private Repos
+## Generics (Go 1.18+)
 
-Make the GitHub repo private. To `go get` from private repos:
-```bash
-git config --global url."git@github.com:".insteadOf "https://github.com/"
-go env -w GOPRIVATE=github.com/yourusername/*
+```go
+func Map[T any, U any](s []T, f func(T) U) []U {
+    result := make([]U, len(s))
+    for i, v := range s {
+        result[i] = f(v)
+    }
+    return result
+}
 ```
 
-## `go get` vs `go install`
+### Type Constraints
 
-| Command | Purpose | Modifies `go.mod`? |
-|---|---|---|
-| `go get` | Adds a dependency to your project | Yes |
-| `go install` | Installs a standalone CLI tool/binary | No |
-
-```bash
-go get github.com/some/lib              # adds lib to your go.mod
-go install github.com/air-verse/air@latest  # installs the `air` binary to ~/go/bin/
+```go
+func Min[T constraints.Ordered](a, b T) T {
+    if a < b { return a }
+    return b
+}
 ```
 
-**TL;DR:** `go get` = add a library to your project. `go install` = install a standalone tool.
+---
 
-## `go.sum` — Dependency Checksums
+## Sorting (`sort` package)
 
-`go.sum` records cryptographic hashes of every module version your project depends on.
+```go
+import "sort"
 
-- `go.mod` = *what* dependencies you need
-- `go.sum` = *proof* those dependencies are authentic
+sort.Ints([]int{3,1,2})
+sort.Strings([]string{"b","a","c"})
+sort.Float64s([]float64{3.1, 1.2})
 
-Go verifies checksums on every build to ensure downloaded dependencies haven't been tampered with. Never manually edit `go.sum` — it's managed automatically by `go get`, `go mod tidy`, etc.
+sort.Slice(people, func(i, j int) bool {
+    return people[i].Age < people[j].Age
+})
 
-## PATH & Zsh Config
-
-### What is PATH?
-
-`PATH` is an environment variable — a list of directories (separated by `:`) that tells your shell **where to look for executables** when you type a command.
-
-```bash
-echo $PATH
-# /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/Sean/go/bin
+sort.IntsAreSorted([]int{1,2,3}) // true
 ```
 
-When you type `air`, zsh checks each directory **left to right** until it finds a binary named `air`. If it's not in any of them → `command not found`.
+---
 
-### Adding to PATH
+## Heaps (`container/heap`)
 
-```bash
-export PATH="$HOME/go/bin:$PATH"
-#           ^^^^^^^^^^^^^ ^^^^^^
-#           add this dir   keep everything already in PATH
+```go
+import "container/heap"
+
+type IntHeap []int
+func (h IntHeap) Len() int           { return len(h) }
+func (h IntHeap) Less(i, j int) bool { return h[i] < h[j] } // min-heap
+func (h IntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *IntHeap) Push(x any)        { *h = append(*h, x.(int)) }
+func (h *IntHeap) Pop() any {
+    old := *h
+    n := len(old)
+    x := old[n-1]
+    *h = old[:n-1]
+    return x
+}
+
+h := &IntHeap{3, 1, 2}
+heap.Init(h)
+heap.Push(h, 0)
+min := heap.Pop(h) // 0
 ```
 
-Without `:$PATH` at the end, you'd **replace** the entire PATH and break every command.
+---
 
-### Zsh config load order
+## Doubly Linked List (`container/list`)
 
-| File | When it runs |
-|---|---|
-| `~/.zshenv` | Always, every shell |
-| `~/.zprofile` | Login shells only |
-| `~/.zshrc` | Interactive shells (your normal terminal) — **this is the one you edit** |
-| `~/.zlogin` | Login shells, after `.zshrc` |
+```go
+import "container/list"
 
-### Permanent vs temporary changes
+l := list.New()
+l.PushBack(1)
+l.PushBack(2)
+l.PushFront(0)
 
-- **Permanent:** Add `export` lines to `~/.zshrc` — runs every time you open a new terminal
-- **Temporary:** Run `export PATH="..."` directly in the terminal — gone when you close it
-- **Reload without restarting:** `source ~/.zshrc`
+for e := l.Front(); e != nil; e = e.Next() {
+    fmt.Println(e.Value)
+}
 
-### Useful commands
+l.Remove(l.Front())
+l.Len() // 2
+```
 
-| Command | What it does |
-|---|---|
-| `echo $PATH` | See your current PATH |
-| `which go` | See which directory `go` was found in |
-| `source ~/.zshrc` | Reload config without closing terminal |
-| `export KEY=value` | Set a variable (temporary, current session only) |
+---
 
-### Key variables
+## Circular List (`container/ring`)
 
-| Variable | Meaning |
-|---|---|
-| `$HOME` or `~` | Your home directory (`/Users/Sean`) |
-| `$PATH` | Directories to search for commands |
-| `$GOPATH` | Go workspace (`~/go`) |
+```go
+import "container/ring"
+
+r := ring.New(3) // ring of size 3
+r.Value = "a"
+r = r.Next()
+r.Value = "b"
+r = r.Next()
+r.Value = "c"
+
+r.Do(func(v any) {
+    fmt.Println(v) // a, b, c
+})
+
+r.Move(1)  // move forward 1
+r.Len()    // 3
+```
+
+---
+
+## Slice Methods (`slices` package, Go 1.21+)
+
+```go
+import "slices"
+
+s := []int{3, 1, 2, 1}
+slices.Sort(s)           // [1,1,2,3]
+slices.Contains(s, 2)    // true
+slices.Index(s, 1)       // 0
+slices.Compact(s)        // [1,2,3] removes consecutive dupes
+slices.Reverse(s)
+slices.Min(s)            // 1
+slices.Max(s)            // 3
+slices.BinarySearch(s, 2)
+```
+
+---
+
+## Map Methods (`maps` package, Go 1.21+)
+
+```go
+import "maps"
+
+m1 := map[string]int{"a": 1}
+m2 := map[string]int{"b": 2}
+maps.Copy(m1, m2)        // m1 = {"a":1, "b":2}
+maps.Equal(m1, m2)       // false
+maps.DeleteFunc(m1, func(k string, v int) bool {
+    return v < 2
+})
+```
+
+---
+
+## String Methods (`strings` package)
+
+```go
+import "strings"
+
+strings.Contains("hello", "ell")   // true
+strings.HasPrefix("hello", "he")   // true
+strings.HasSuffix("hello", "lo")   // true
+strings.Split("a,b,c", ",")        // ["a","b","c"]
+strings.Join([]string{"a","b"}, "-") // "a-b"
+strings.Replace("hello", "l", "r", 1) // "herlo"
+strings.ReplaceAll("hello", "l", "r") // "herro"
+strings.Trim("  hi  ", " ")        // "hi"
+strings.ToLower("HI")              // "hi"
+strings.ToUpper("hi")              // "HI"
+strings.Fields("a  b  c")          // ["a","b","c"]
+```
+
+### strings.Builder (efficient string building)
+
+```go
+var b strings.Builder
+b.WriteString("hello")
+b.WriteString(" world")
+b.String() // "hello world"
+```
+
+---
+
+## Runes
+
+A rune is an alias for `int32` representing a Unicode code point:
+
+```go
+var r rune = 'A'  // same as int32 = 65
+```
+
+### `unicode` package
+
+```go
+import "unicode"
+
+unicode.IsLetter('a')    // true
+unicode.IsDigit('5')     // true
+unicode.IsUpper('A')     // true
+unicode.IsLower('a')     // true
+unicode.IsSpace(' ')     // true
+unicode.IsPunct('!')     // true
+unicode.ToUpper('a')     // 'A'
+unicode.ToLower('A')     // 'a'
+unicode.ToTitle('a')     // 'A'
+```
+
+### `unicode/utf8` package
+
+```go
+import "unicode/utf8"
+
+utf8.RuneCountInString("héllo")  // 5 (not 6 bytes)
+utf8.RuneLen('é')                // 2 bytes
+utf8.ValidString("hello")        // true
+utf8.DecodeRuneInString("é")     // 'é', 2
+```
+
+### Converting between strings and runes
+
+```go
+s := "hello"
+runes := []rune(s)        // string -> rune slice
+str := string(runes)      // rune slice -> string
+
+// Iterating runes in a string
+for i, r := range "héllo" {
+    fmt.Println(i, r, string(r))
+}
+```
