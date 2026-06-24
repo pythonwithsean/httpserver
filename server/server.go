@@ -36,12 +36,17 @@ func NewServer(addr, port string) *Server {
 	}
 }
 
-func (s *Server) Start() {
-	addr := s.addr + s.port
+func newListener(addr string) net.Listener {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		panic(fmt.Sprintf("Error starting server on %s: %v", addr, err))
 	}
+	return listener
+}
+
+func (s *Server) Start() {
+	addr := s.addr + s.port
+	listener := newListener(addr)
 	s.Listener = listener
 	defer s.Listener.Close()
 	fmt.Printf("Listening on %s\n", addr)
