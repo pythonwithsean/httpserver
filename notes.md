@@ -286,3 +286,37 @@ for i, r := range "héllo" {
     fmt.Println(i, r, string(r))
 }
 ```
+
+---
+
+# Reading RFCs (ABNF Notation)
+
+RFCs (7230/9110/9112 for HTTP) define grammar using **ABNF** (Augmented Backus-Naur Form, RFC 5234).
+
+| Symbol | Meaning | Example |
+|---|---|---|
+| `=` | "is defined as" | `rule = foo` |
+| `/` | OR (alternatives) | `method = "GET" / "POST"` |
+| `*` | repeat zero or more | `*DIGIT` = zero or more digits |
+| `1*` | repeat one or more | `1*DIGIT` = at least one digit |
+| `m*n` | repeat m to n times | `2*3DIGIT` = 2 to 3 digits |
+| `[ ]` | optional (0 or 1) | `[ ":" port ]` |
+| `( )` | grouping | `( "a" / "b" ) "c"` |
+| `"text"` | literal string | `"GET"` |
+| `%xHH` | a specific byte/char by hex | `%x0D` = CR |
+
+### Example: request line
+
+```
+request-line = method SP request-target SP HTTP-version CRLF
+```
+
+Read left to right: a request-line is a method, then a space, then the target, then a space, then the version, then CRLF. No `*` or `/`, so each piece appears exactly once, in that order.
+
+### Example: header field (with repetition)
+
+```
+field-line = field-name ":" OWS field-value OWS
+```
+
+`OWS` = optional whitespace, defined elsewhere as `OWS = *( SP / HTAB )` — zero or more spaces or tabs.
