@@ -1,11 +1,8 @@
 .SILENT:
 
 
-dev:
-	air
-
 run:
-	go run .
+	air
 
 test:
 	go test -v ./tests
@@ -14,4 +11,4 @@ build:
 	go build -o http-server .
 
 curl:
-	curl -v localhost:5100
+	curl -v localhost:8000
