@@ -17,16 +17,16 @@ func TestParseHeader(t *testing.T) {
 	req := &httpServer.Request{Headers: make(map[string]string)}
 	httpServer.ParseHeader(req, header)
 
-	if req.Method != "GET" {
-		t.Errorf("Expected Method 'GET', got '%s'", req.Method)
+	if req.Method != "get" {
+		t.Errorf("Expected Method 'get', got '%s'", req.Method)
 	}
 
 	if req.Path != "/" {
 		t.Errorf("Expected Path '/', got '%s'", req.Path)
 	}
 
-	if req.Version != "HTTP/1.1" {
-		t.Errorf("Expected Version 'HTTP/1.1', got '%s'", req.Version)
+	if req.Version != "http/1.1" {
+		t.Errorf("Expected Version 'http/1.1', got '%s'", req.Version)
 	}
 
 	if req.Host != "localhost:5100" {
@@ -48,7 +48,7 @@ func TestIsValidMethod(t *testing.T) {
 		{"HEAD", true},
 		{"OPTIONS", true},
 		{"INVALID", false},
-		{"get", false},
+		{"get", true},
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -89,13 +89,61 @@ func TestIsValidVersion(t *testing.T) {
 		{"HTTP/2", true},
 		{"HTTP/2.0", true},
 		{"HTTP/3", false},
-		{"http/1.1", false},
+		{"http/1.1", true},
 		{"", false},
 	}
 	for _, tt := range tests {
 		got := httpServer.IsValidVersion(tt.version)
 		if got != tt.want {
 			t.Errorf("IsValidVersion(%q) = %v, want %v", tt.version, got, tt.want)
+		}
+	}
+}
+
+func TestIsValidHeaderKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"Host", true},
+		{"Content-Length", true},
+		{"X-Custom-Header", true},
+		{"", false},
+		{"   ", false},
+		{"Bad Key", false},    // contains a space
+		{"Bad:Key", false},    // contains a colon
+		{"Bad\r\nKey", false}, // CRLF injection attempt
+		{"Évil", false},       // non-ASCII byte
+	}
+	for _, tt := range tests {
+		got := httpServer.IsValidHeaderKey(tt.key)
+		if got != tt.want {
+			t.Errorf("IsValidHeaderKey(%q) = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestIsValidHeaderValue(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"localhost:5100", true},
+		{"curl/7.64.1", true},
+		{"*/*", true},
+		{"value with spaces", true},
+		{"value\twith\ttabs", true},
+		{"", true},                               // empty value has no invalid characters
+		{"bad\r\nSet-Cookie: admin=true", false}, // CRLF injection attempt
+		{"bad\nvalue", false},                    // bare LF
+		{"bad\x00value", false},                  // NUL byte
+		{"bad\x7Fvalue", false},                  // DEL char
+		{"héllo", false},                         // non-ASCII byte (UTF-8 multi-byte)
+	}
+	for _, tt := range tests {
+		got := httpServer.IsValidHeaderValue(tt.value)
+		if got != tt.want {
+			t.Errorf("IsValidHeaderValue(%q) = %v, want %v", tt.value, got, tt.want)
 		}
 	}
 }

@@ -22,24 +22,46 @@ var validVersions = map[string]bool{
 	"HTTP/2.0": true,
 }
 
+// IsValidMethod checks if the provided HTTP method is valid.
+// HTTP is case-sensitive, so we convert the method to uppercase before checking.
 func IsValidMethod(method string) bool {
-	return validMethods[method]
+	return validMethods[strings.ToUpper(method)]
 }
 
+// IsValidPath checks if the provided path is valid.
 func IsValidPath(path string) bool {
 	return strings.HasPrefix(path, "/")
 }
 
+// IsValidVersion checks if the provided HTTP version is valid.
+// HTTP is case-sensitive, so we convert the version to uppercase before checking.
 func IsValidVersion(version string) bool {
-	return validVersions[version]
+	return validVersions[strings.ToUpper(version)]
 }
 
+// Empty checks if a string is empty or contains only whitespace.
 func Empty(s string) bool {
 	return strings.TrimSpace(s) == ""
 }
 
+// IsValidHeaderKey checks if the provided header key is valid.
 func IsValidHeaderKey(key string) bool {
-	return !Empty(key) && !strings.ContainsAny(key, ": ")
+	return !Empty(key) && !strings.ContainsAny(key, ": ") && (len(strings.Split(strings.TrimSpace(key), " ")) == 1) && IsValidHeaderValue(key)
+}
+
+// Ensures no CRLF attack in header is passed
+func IsValidHeaderValue(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == 0x20 || c == 0x09 {
+			continue
+		}
+		if c < 0x21 || c > 0x7E {
+			// control char, DEL, non-ASCII byte
+			return false
+		}
+	}
+	return true
 }
 
 func ParseHeaderField(line string) (string, string, bool) {
@@ -48,6 +70,9 @@ func ParseHeaderField(line string) (string, string, bool) {
 		return "", "", false
 	}
 	key := strings.TrimSpace(parts[0])
+	if !IsValidHeaderKey(key) {
+		return "", "", false
+	}
 	value := strings.TrimSpace(parts[1])
 	if Empty(key) || Empty(value) {
 		return "", "", false
@@ -77,19 +102,29 @@ func ParseHeader(req *Request, header []string) {
 		log.Printf("Invalid HTTP version: %q", parts[2])
 		return
 	}
-	req.Method = parts[0]
-	req.Path = parts[1]
-	req.Version = parts[2]
+	if !IsValidHeaderValue(parts[0]) || !IsValidHeaderValue(parts[1]) || !IsValidHeaderValue(parts[2]) {
+		log.Printf("Invalid characters in request line: %q", header[0])
+		return
+	}
+	req.Method = strings.ToLower(parts[0])
+	req.Path = strings.ToLower(parts[1])
+	req.Version = strings.ToLower(parts[2])
 
+	//TODO: duplicate req.Headers key overwite each other
 	for i := 1; i < len(header); i++ {
 		key, value, ok := ParseHeaderField(header[i])
 		if !ok {
 			log.Printf("Invalid header: %q", header[i])
 			continue
 		}
-		req.Headers[key] = value
-		if key == "Host" {
-			req.Host = value
+		if !IsValidHeaderValue(value) {
+			log.Printf("Invalid characters in header: %q", header[i])
+			continue
+		}
+		// NOTE: im making everything lower case so i dont have to worry about casing ever in processing
+		req.Headers[strings.ToLower(key)] = strings.ToLower(value)
+		if strings.ToUpper(key) == "HOST" {
+			req.Host = strings.ToLower(value)
 		}
 	}
 }
