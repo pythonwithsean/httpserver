@@ -138,6 +138,6 @@ func handleConn(conn net.Conn) {
 	// }
 
 	// fmt.Printf("Parsed request from %s \nMethod: %s\nPath: %s\nVersion: %s\nHost: %s\nHeaders: %s\n", conn.RemoteAddr().String(), req.Method, req.Path, req.Version, req.Host, string(http_header_json))
-	body := "Hello : )"
-	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length:%d\r\n\r\n%s\r\n", len(body), body)))
+	body := "<html><body><h1>Hello, Sean!</h1></body></html>"
+	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: text/html\r\n\r\n%s", len(body), body)))
 }

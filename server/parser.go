@@ -111,6 +111,7 @@ func ParseHeader(req *Request, header []string) {
 	req.Version = strings.ToLower(parts[2])
 
 	//TODO: duplicate req.Headers key overwite each other
+	//TODO-SOL: use a map[string][]string to store multiple values for the same header key, or use a custom struct to hold the headers and their values. This way, you can preserve all header values without overwriting them.
 	for i := 1; i < len(header); i++ {
 		key, value, ok := ParseHeaderField(header[i])
 		if !ok {
