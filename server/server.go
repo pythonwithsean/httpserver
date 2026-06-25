@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-const max_header_size = 8192 // 8KB
-const max_chunk_size = 1     // 1 Byte
-const max_conn_duration = 30 * time.Second
-const CRLF = "\r\n"
+const max_header_size = 8192               // 8KB
+const max_chunk_size = 1                   // 1 Byte
+const max_conn_duration = 30 * time.Second // 30 seconds
+const CRLF = "\r\n"                        // Carriage Return + Line Feed
 
 type Server struct {
 	addr     string
