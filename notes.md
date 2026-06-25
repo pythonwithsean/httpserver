@@ -287,6 +287,41 @@ for i, r := range "héllo" {
 }
 ```
 
+### Byte vs Rune — which one am I iterating?
+
+| | type | what `for i := 0; i < len(s); i++ { c := s[i] }` gives you | what `for i, r := range s` gives you |
+|---|---|---|---|
+| **byte** | `uint8` (0-255) | ✅ this — raw byte, one at a time | — |
+| **rune** | `int32` (Unicode code point) | ❌ never | ✅ this — decodes UTF-8, may skip multiple bytes per iteration |
+
+Indexing a string with `s[i]` **always** gives a byte, never a rune — even if the string contains multi-byte UTF-8 characters. That's exactly why a byte-range check (like `isValidHeaderValue` above) works for rejecting non-ASCII input: any multi-byte UTF-8 character has at least one byte `≥ 0x80`, so just walking bytes and checking the range catches it without ever needing to decode runes.
+
+### Rune literals (`'A'`) vs byte values
+
+`'A'` in Go is a **rune literal** — its type defaults to `rune` (`int32`), and it holds the Unicode code point value. `r == 'A'` compares code points, not bytes.
+
+Since ASCII (0-127) is literally the first 128 Unicode code points by design, for ASCII characters the rune value and the byte value are numerically identical: `'A'` as a rune is `65`, and the byte `0x41` is also `65`. Same number, just a different *type* (`rune` is `int32`, a byte is `uint8`).
+
+### Number bases — same value, different notation
+
+A byte isn't inherently hex or octal — it's just 8 bits in memory: `01000001`. Decimal, hex, and octal are all just different human-readable ways to *write* that same number; none of them changes what's stored:
+
+```
+binary:  01000001
+decimal: 65
+hex:     0x41
+octal:   0101 (or 0o101 in modern Go)
+```
+
+All four represent the exact same byte/code point. As long as the numbers match, they point to the same entry in the ASCII/Unicode table — the notation you pick (hex, decimal, octal) doesn't change the underlying value.
+
+**Why hex is the convention for byte ranges**: 1 byte = 8 bits = exactly 2 hex digits (`0x00`-`0xFF`), a clean 1-to-1 mapping (4 bits per hex digit). That's why specs/code dealing with byte ranges (like the header validation range `0x21`-`0x7E`) use hex rather than decimal or octal.
+
+**Octal (base 8)** is mostly a historical leftover from pre-8-bit-byte systems. Still seen today in:
+- Unix file permissions: `chmod 755` (each digit = 3 bits = one `rwx` group)
+- Old C/Go escape sequences: `'\101'` (octal) == `'\x41'` (hex) == `'A'`
+- Go syntax: `0o17` (or legacy `017`) = octal 17 = decimal 15
+
 ---
 
 # Reading RFCs (ABNF Notation)
@@ -320,3 +355,65 @@ field-line = field-name ":" OWS field-value OWS
 ```
 
 `OWS` = optional whitespace, defined elsewhere as `OWS = *( SP / HTAB )` — zero or more spaces or tabs.
+
+---
+
+## Header Injection / Unicode Smuggling
+
+**Background:** every character is just a number under the hood. **US-ASCII** is the original table — numbers 0-127, covers English letters/digits/punctuation. **Unicode** extends this with thousands more characters (other languages, emoji, lookalike letters) using numbers above 127, often multiple bytes per character.
+
+**The vulnerability:** if a server trusts header values without checking their characters, an attacker can smuggle in control characters or lookalike Unicode characters. Different systems in the chain (your code, a proxy, a browser) may disagree about how to interpret those bytes — this class of bug enables CRLF injection and HTTP request smuggling.
+
+**The fix:** only accept the "boring visible text" range — reject everything else.
+
+| Range (hex) | Range (decimal) | Meaning | Allowed? |
+|---|---|---|---|
+| `0x00`-`0x1F` | 0-31 | control characters (NUL, CR, LF, etc.) | ❌ rejected |
+| `0x20` | 32 | space | ✅ allowed (separator only) |
+| `0x21`-`0x7E` | 33-126 | visible ASCII (letters, digits, punctuation) | ✅ allowed |
+| `0x7F` | 127 | DEL (control char) | ❌ rejected |
+| `0x80`+ | 128+ | any non-ASCII / Unicode byte | ❌ rejected |
+
+`0x` means "hex digits follow" — `0x21` = 33 in decimal.
+
+**Example bad request** (raw bytes, `\r\n` shown literally for clarity):
+```
+GET / HTTP/1.1\r\n
+Host: example.com\r\n
+X-Evil: foo\r\nSet-Cookie: admin=true\r\n
+\r\n
+```
+If `X-Evil`'s value weren't checked for raw `\r\n`, the attacker's "header value" actually injects a brand new header (`Set-Cookie: admin=true`) that was never intended — this is CRLF/header injection. A byte-range check (reject anything outside `0x21`-`0x7E` plus space/tab) stops this, because `\r` (`0x0D`) and `\n` (`0x0A`) both fall in the rejected control-character range.
+
+**Go implementation** (operate on bytes, not runes — any multi-byte UTF-8 character has a byte `≥ 0x80`, so this check rejects non-ASCII automatically without decoding Unicode):
+
+```go
+func isValidHeaderValue(s string) bool {
+    for i := 0; i < len(s); i++ {
+        c := s[i]
+        if c == ' ' || c == '\t' {
+            continue
+        }
+        if c < 0x21 || c > 0x7E {
+            return false // control char, DEL, or non-ASCII byte
+        }
+    }
+    return true
+}
+```
+
+This also helps `Content-Length` parsing for free: `strconv.Atoi` only recognizes ASCII `'0'`-`'9'`, so it already rejects Unicode digit lookalikes (e.g. full-width `０-９`) — but validating at parse time closes the door earlier, for every header, not just `Content-Length`.
+
+### Header keys are stricter than header values
+
+The ASCII range check above is enough to stop injection, but RFC 7230 actually restricts header **keys** (`field-name`, grammar rule `token`) to a narrower whitelist than values — values can contain spaces and most punctuation, but keys can't.
+
+Allowed in a header key (`tchar` = "token char"):
+
+| Category | Allowed characters |
+|---|---|
+| Letters | `A-Z` `a-z` |
+| Digits | `0-9` |
+| Symbols | `! # $ % & ' * + - . ^ _ \` \| ~` |
+
+Anything else — including `( ) < > @ , ; \ / [ ] ? = { } "` and any control/non-ASCII byte — is **not** a valid header key character, even though some of those (like `,` or `"`) are perfectly fine inside a header *value*.
