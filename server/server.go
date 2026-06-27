@@ -14,7 +14,7 @@ const max_header_size = 8192               // 8KB
 const max_chunk_size = 1                   // 1 Byte
 const max_conn_duration = 30 * time.Second // 30 seconds
 const CRLF = "\r\n"                        // Carriage Return + Line Feed
-const max_body_size = 10485760             // 10MB
+const max_body_size = 1024 * 1024 // 1MB
 
 type Server struct {
 	addr     string
