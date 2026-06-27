@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,6 +14,7 @@ const max_header_size = 8192               // 8KB
 const max_chunk_size = 1                   // 1 Byte
 const max_conn_duration = 30 * time.Second // 30 seconds
 const CRLF = "\r\n"                        // Carriage Return + Line Feed
+const max_body_size = 10485760             // 10MB
 
 type Server struct {
 	addr     string
@@ -51,10 +53,10 @@ func (s *Server) Start() {
 	s.Listener = listener
 	defer s.Listener.Close()
 	fmt.Printf("Listening on %s\n", addr)
-	s.HandleConnections()
+	s.handleConnections()
 }
 
-func (s *Server) HandleConnections() {
+func (s *Server) handleConnections() {
 	if s.Listener == nil {
 		panic("Listener is not initialized")
 	}
@@ -77,7 +79,6 @@ func handleConn(conn net.Conn) {
 	var bodyBlockIdx int
 	// if json header has connection: keep-alive, we should keep the connection open for a certain duration
 	conn.SetDeadline(time.Now().Add(max_conn_duration)) // Set a deadline for the connection
-	// TODO: Improve performance of searching for CRLF+CRlF
 	for {
 		// Set a deadline for the connection to avoid hanging connections
 		n, err := conn.Read(chunk)
@@ -120,7 +121,6 @@ func handleConn(conn net.Conn) {
 		return
 	}
 
-	//TODO: reserach CRLF injection and implement a check for it
 	req := &Request{Headers: make(map[string]string)}
 	ParseHeader(req, strings.Split(string(headerBlock), CRLF))
 	if req.Method == "" || req.Path == "" || req.Version == "" || req.Host == "" || len(req.Headers) == 0 {
@@ -129,15 +129,34 @@ func handleConn(conn net.Conn) {
 		return
 	}
 
-	fmt.Printf("Content-Length %s, bodyBlockIdx %d\n", req.Headers["content-type"], bodyBlockIdx)
-	fmt.Printf("Body: %s\n", string(data[bodyBlockIdx:]))
-	// cl, err := strconv.Atoi(req.Headers["content-type"])
-	// if err != nil {
-	// 	conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
-	// 	fmt.Printf("Error reading from connection: %s\n", err)
-	// }
-
-	// fmt.Printf("Parsed request from %s \nMethod: %s\nPath: %s\nVersion: %s\nHost: %s\nHeaders: %s\n", conn.RemoteAddr().String(), req.Method, req.Path, req.Version, req.Host, string(http_header_json))
-	body := "<html><body><h1>Hello, Sean!</h1></body></html>"
+	_, ok := req.Headers["content-length"]
+	if ok {
+		cl, err := strconv.Atoi(req.Headers["content-length"])
+		if err != nil {
+			conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+			fmt.Printf("Error reading from connection: %s\n", err)
+			return
+		}
+		if cl > max_body_size {
+			conn.Write([]byte("HTTP/1.1 413 Payload Too Large\r\n\r\n"))
+			fmt.Printf("Body too large from %s\n", conn.RemoteAddr().String())
+			return
+		}
+		remaining_body_bytes := cl - (len(data) - bodyBlockIdx)
+		if remaining_body_bytes > 0 {
+			// Read the remaining body bytes
+			bodyChunk := make([]byte, remaining_body_bytes)
+			n, err := conn.Read(bodyChunk)
+			if err != nil {
+				conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+				fmt.Printf("Error reading from connection: %s\n", err)
+				return
+			}
+			data = append(data, bodyChunk[:n]...)
+		}
+		req.Body = string(data[bodyBlockIdx:])
+		fmt.Printf("Body: %s", req.Body)
+	}
+	body := "<html><body><h1>Hello, World!</h1></body></html>"
 	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: text/html\r\n\r\n%s", len(body), body)))
 }

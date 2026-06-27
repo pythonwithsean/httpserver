@@ -53,6 +53,7 @@ func IsValidHeaderKey(key string) bool {
 func IsValidHeaderValue(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
+
 		if c == 0x20 || c == 0x09 {
 			continue
 		}
